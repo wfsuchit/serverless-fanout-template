@@ -26,7 +26,7 @@ Resources:
       PathPart: poc
       RestApiId: !Ref MySAMApiGateway
 
-  APIGatewayDeploymeny:
+  APIGatewayDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - MySAMApiGateway
