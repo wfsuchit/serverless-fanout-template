@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: >
+  serverless-order-pipeline
+
+  Sample SAM Template for serverless-order-pipeline
+
+Parameters:
+  # Currently not in use
+  ModuleName:
+    Type: String
+    Default: serverless-order-pipeline
+    Description: Module name with respect to which all the resources will be made
+
+Resources:
+
+  MySAMApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: My API Gateway
+
+  MyApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt MySAMApiGateway.RootResourceId
+      PathPart: poc
+      RestApiId: !Ref MySAMApiGateway
+
+  APIGatewayDeploymeny:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - MySAMApiGateway
+    Properties:
+      RestApiId: !Ref MySAMApiGateway
+      StageName: prod
+
+  MyApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MySAMApiGateway
+      ResourceId: !Ref MyApiGatewayResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.querystring.message: false
+        method.request.querystring.subject: false
+        method.request.querystring.topic: false
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Credentials: !GetAtt MyApiGatewaySNSRole.Arn
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:sns:action/Publish
+        RequestParameters:
+          integration.request.querystring.TopicArn: !GetAtt HealthtechSNS.Arn
+          integration.request.querystring.Subject: "method.request.querystring.subject"
+          integration.request.querystring.Message: "method.request.querystring.message"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: '{"status":"OK"}'
+      MethodResponses:
+        - StatusCode: "200"
+
+  MyApiGatewaySNSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: MyApiGatewaySNSRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - SNS:Publish
+                Resource: !Ref HealthtechSNS
+
+  HealthtechSNS:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: healthtech
+      FifoTopic: false
+      Subscription:
+        - Endpoint: !GetAtt HealthtechQueue1.Arn
+          Protocol: "sqs"
+        # - Endpoint: !GetAtt LambdaTwo.Arn
+        #   Protocol: 'lambda'
+        # - Endpoint: !GetAtt LambdaThree.Arn
+        #   Protocol: 'lambda'
+      Tags:
+        - Key: Env
+          Value: POC
+        - Key: module
+          Value: healthtech
+
+  HealthtechQueue1:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 0
+      VisibilityTimeout: 120
+      Tags:
+        - Key: Env
+          Value: POC
+        - Key: module
+          Value: healthtech
+
+  MySQSQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: SQS:SendMessage
+            Resource: !GetAtt HealthtechQueue1.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref HealthtechSNS
+      Queues:
+        - !Ref HealthtechQueue1
+
+  # LambdaFunctionEventSourceMapping:
+  #   Type: AWS::Lambda::EventSourceMapping
+  #   Properties:
+  #     BatchSize: 1
+  #     Enabled: true
+  #     EventSourceArn: !GetAtt HealthtechQueue1.Arn
+  #     FunctionName: !GetAtt Lambda1.Arn
+
+  LambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SQSLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt HealthtechQueue1.Arn
+        - PolicyName: LambdaCloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+
+  Lambda1:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: hello-world/
+      Handler: app.lambdaHandler
+      Runtime: nodejs18.x
+      Description: "SQS triggered lambda 1"
+      Events:
+        SqsEvent:
+          Type: 'SQS'
+          Properties:
+            Queue: !GetAtt HealthtechQueue1.Arn
+            BatchSize: 1
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref HealthtechSNS
+
+# Outputs:
+#   ApiEndpoint:
+#     Description: 'API Gateway endpoint URL'
+#     Value: !Sub 'https://${ServerlessOrderPipelineAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/test/message'
