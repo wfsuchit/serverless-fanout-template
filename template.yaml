@@ -17,7 +17,7 @@ Resources:
   MySAMApiGateway:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: My API Gateway
+      Name: !Join ["-", [!Ref "ModuleName", "apigateway"]]
 
   MyApiGatewayResource:
     Type: AWS::ApiGateway::Resource
@@ -30,6 +30,8 @@ Resources:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - MySAMApiGateway
+      - MyApiGatewayResource
+      - MyApiGatewayMethod
     Properties:
       RestApiId: !Ref MySAMApiGateway
       StageName: prod
@@ -44,20 +46,18 @@ Resources:
       RequestParameters:
         method.request.querystring.message: false
         method.request.querystring.subject: false
-        method.request.querystring.topic: false
+        # method.request.querystring.topic: false
       Integration:
         Type: AWS
         IntegrationHttpMethod: POST
         Credentials: !GetAtt MyApiGatewaySNSRole.Arn
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:sns:action/Publish
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:sns:path//?Action=Publish&TopicArn=${HealthtechSNS}"
         RequestParameters:
-          integration.request.querystring.TopicArn: !GetAtt HealthtechSNS.Arn
+          # integration.request.querystring.TopicArn: "method.request.querystring.topic"
           integration.request.querystring.Subject: "method.request.querystring.subject"
           integration.request.querystring.Message: "method.request.querystring.message"
         IntegrationResponses:
           - StatusCode: 200
-            ResponseTemplates:
-              application/json: '{"status":"OK"}'
       MethodResponses:
         - StatusCode: "200"
 
@@ -92,22 +92,21 @@ Resources:
   HealthtechSNS:
     Type: AWS::SNS::Topic
     Properties:
-      DisplayName: healthtech
+      DisplayName: !Join ["-", [!Ref "ModuleName", "sns"]]
+      # TopicName: !Join ["-", [!Ref "ModuleName", "sns"]]
       FifoTopic: false
       Subscription:
-        - Endpoint: !GetAtt HealthtechQueue1.Arn
+        - Endpoint: !GetAtt HealthtechQueueOne.Arn
           Protocol: "sqs"
-        # - Endpoint: !GetAtt LambdaTwo.Arn
-        #   Protocol: 'lambda'
-        # - Endpoint: !GetAtt LambdaThree.Arn
-        #   Protocol: 'lambda'
+        - Endpoint: !GetAtt HealthtechQueueTwo.Arn
+          Protocol: "sqs"
       Tags:
         - Key: Env
           Value: POC
         - Key: module
-          Value: healthtech
+          Value: !Ref "ModuleName"
 
-  HealthtechQueue1:
+  HealthtechQueueOne:
     Type: AWS::SQS::Queue
     Properties:
       DelaySeconds: 0
@@ -116,7 +115,18 @@ Resources:
         - Key: Env
           Value: POC
         - Key: module
-          Value: healthtech
+          Value: !Ref "ModuleName"
+          
+  HealthtechQueueTwo:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 0
+      VisibilityTimeout: 120
+      Tags:
+        - Key: Env
+          Value: POC
+        - Key: module
+          Value: !Ref "ModuleName"
 
   MySQSQueuePolicy:
     Type: AWS::SQS::QueuePolicy
@@ -128,20 +138,13 @@ Resources:
             Principal:
               AWS: "*"
             Action: SQS:SendMessage
-            Resource: !GetAtt HealthtechQueue1.Arn
+            Resource: arn:aws:sqs:ap-south-1:*
             Condition:
               ArnEquals:
                 aws:SourceArn: !Ref HealthtechSNS
       Queues:
-        - !Ref HealthtechQueue1
-
-  # LambdaFunctionEventSourceMapping:
-  #   Type: AWS::Lambda::EventSourceMapping
-  #   Properties:
-  #     BatchSize: 1
-  #     Enabled: true
-  #     EventSourceArn: !GetAtt HealthtechQueue1.Arn
-  #     FunctionName: !GetAtt Lambda1.Arn
+        - !Ref HealthtechQueueOne
+        - !Ref HealthtechQueueTwo
 
   LambdaRole:
     Type: "AWS::IAM::Role"
@@ -166,7 +169,9 @@ Resources:
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                   - sqs:ChangeMessageVisibility
-                Resource: !GetAtt HealthtechQueue1.Arn
+                Resource: 
+                  - !GetAtt HealthtechQueueOne.Arn
+                  - !GetAtt HealthtechQueueTwo.Arn
         - PolicyName: LambdaCloudWatchLogs
           PolicyDocument:
             Version: "2012-10-17"
@@ -178,18 +183,38 @@ Resources:
                   - "logs:PutLogEvents"
                 Resource: "arn:aws:logs:*:*:*"
 
-  Lambda1:
+  LambdaOne:
     Type: 'AWS::Serverless::Function'
     Properties:
       CodeUri: hello-world/
       Handler: app.lambdaHandler
       Runtime: nodejs18.x
-      Description: "SQS triggered lambda 1"
+      FunctionName: !Join ["-", [!Ref "ModuleName", "queueone", "lambdaone"]]
+      Description: "SQS One triggered lambda One"
       Events:
         SqsEvent:
           Type: 'SQS'
           Properties:
-            Queue: !GetAtt HealthtechQueue1.Arn
+            Queue: !GetAtt HealthtechQueueOne.Arn
+            BatchSize: 1
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref HealthtechSNS
+
+  LambdaThree:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: hello-world/
+      Handler: app.lambdaHandler
+      Runtime: nodejs18.x
+      FunctionName: !Join ["-", [!Ref "ModuleName", "queuetwo", "lambdaone"]]
+      Description: "SQS two triggered lambda One"
+      Events:
+        SqsEvent:
+          Type: 'SQS'
+          Properties:
+            Queue: !GetAtt HealthtechQueueTwo.Arn
             BatchSize: 1
       Role: !GetAtt LambdaRole.Arn
       Environment:
