@@ -1,15 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: 'AWS::Serverless-2016-10-31'
 Description: >
-  serverless-order-pipeline
+  fanout-template
 
-  Sample SAM Template for serverless-order-pipeline
+  Sample SAM Template for fanout-template
 
 Parameters:
   # Currently not in use
   ModuleName:
     Type: String
-    Default: serverless-order-pipeline
+    Default: fanout-template
     Description: Module name with respect to which all the resources will be made
 
 Resources:

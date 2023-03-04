@@ -5,7 +5,7 @@ version = 0.1
 [default]
 [default.global]
 [default.global.parameters]
-stack_name = "serverless-order-pipeline"
+stack_name = "serverless-fanout-template"
 
 [default.build]
 [default.build.parameters]
